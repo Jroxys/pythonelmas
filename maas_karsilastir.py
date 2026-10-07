@@ -91,9 +91,16 @@ def baslik_bul(satirlar):
     return en_iyi
 
 
+SECICI = None  # arayüz (GUI) kendi seçim penceresini buraya bağlar: fonksiyon(mesaj, secenekler) -> değer
+
+
 def sec(mesaj, secenekler):
     """Birden fazla aday varsa kullanıcıya sorar (etkileşimsizse ilkini seçer)."""
-    if len(secenekler) == 1 or not sys.stdin.isatty():
+    if len(secenekler) == 1:
+        return secenekler[0][0]
+    if SECICI:
+        return SECICI(mesaj, secenekler)
+    if sys.stdin is None or not sys.stdin.isatty():
         return secenekler[0][0]
     print(mesaj)
     for n, (_, etiket) in enumerate(secenekler, 1):

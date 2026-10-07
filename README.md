@@ -12,7 +12,7 @@
 2. `pip install openpyxl`
 
 ### Kullanım
-- **Windows:** `maas_karsilastir.bat` dosyasına çift tıklayın, açılan pencerelerden iki Excel dosyasını seçin.
+- **Pencereli (önerilen):** `python maas_karsilastir_gui.py` veya Windows'ta `maas_karsilastir.bat` dosyasına çift tıklayın. Açılan pencerede iki Excel'i seçip **MAAŞLARI KARŞILAŞTIR** butonuna basın.
 - **Komut satırı:** `python maas_karsilastir.py dosya1.xlsx dosya2.xlsx -o sonuc.xlsx`
 
 Seçenekler: `--tolerans 1` (1 TL farkı aynı say), `--ad1 B --maas1 F --ad2 A --maas2 C` (sütunları elle belirt).
