@@ -200,7 +200,11 @@ class Uygulama(tk.Tk):
             if tekrar:
                 self.yaz(f"Uyarı: {etiket}'de aynı kişi birden fazla kez geçiyor ({tekrar} kayıt), sırayla eşleştirildi.")
         eslesen, s1, s2 = mk.karsilastir(k1, k2, tol, self.elden.get())
-        mk.rapor_yaz(cikti, d1, d2, eslesen, s1, s2, tol, self.elden.get())
+        tekrar = mk.tekrar_tc_satirlari([("Dosya 1", k1), ("Dosya 2", k2)])
+        if tekrar:
+            self.yaz(f"UYARI: {len({(d, k['tc']) for d, k in tekrar})} TC numarası birden fazla farklı kişide geçiyor! "
+                     "Sonuçta 'Tekrarlayan TC' sayfasına bakın; kaynak dosyada TC yanlış olabilir.", "hata")
+        mk.rapor_yaz(cikti, d1, d2, eslesen, s1, s2, tol, self.elden.get(), tekrar)
         farkli = sum(1 for e in eslesen if not e["ayni"])
         self.yaz(f"Dosya 1: {len(k1)} kişi ({len({k['sayfa'] for k in k1})} sayfa)  |  Dosya 2: {len(k2)} kişi")
         self.yaz(f"Eşleşen: {len(eslesen)}  |  Maaşı farklı: {farkli}  |  "

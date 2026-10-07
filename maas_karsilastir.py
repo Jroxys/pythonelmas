@@ -207,8 +207,38 @@ def kisileri_oku(yol, ad_sutun=None, maas_sutun=None, etiket="Dosya"):
 
 
 # ---------------------------------------------------------------- karşılaştırma
+def _ciftle(x1, x2):
+    """Aynı anahtarlı iki grubu isim benzerliğine göre eşleştirir (en benzer çiftler önce).
+    İsimler eşit benzerlikteyse listedeki sırayı korur. (çiftler, artan1, artan2) döndürür."""
+    adaylar = sorted(((-difflib.SequenceMatcher(None, isim_anahtar(a["ad"]), isim_anahtar(b["ad"])).ratio(), i, j)
+                      for i, a in enumerate(x1) for j, b in enumerate(x2)))
+    k1, k2, ciftler = set(), set(), []
+    for _, i, j in adaylar:
+        if i not in k1 and j not in k2:
+            k1.add(i)
+            k2.add(j)
+            ciftler.append((i, j))
+    ciftler.sort()
+    return ([(x1[i], x2[j]) for i, j in ciftler],
+            [a for i, a in enumerate(x1) if i not in k1], [b for j, b in enumerate(x2) if j not in k2])
+
+
+def tekrar_tc_satirlari(kayitlar_listesi):
+    """Aynı TC'nin birden fazla kişide geçtiği kayıtlar: [(dosya adı, kayıt), ...]."""
+    sonuc = []
+    for etiket, kayitlar in kayitlar_listesi:
+        say = defaultdict(list)
+        for k in kayitlar:
+            if k["tc"]:
+                say[k["tc"]].append(k)
+        for tc, liste in say.items():
+            if len(liste) > 1 and len({x["anahtar"] for x in liste}) > 1:
+                sonuc += [(etiket, x) for x in liste]
+    return sonuc
+
+
 def _esle(l1, l2, anahtar_fn, yontem, tolerans, elden_dahil, eslesen):
-    """Aynı anahtara sahip kayıtları sırayla eşleştirir; eşleşmeyenleri döndürür."""
+    """Aynı anahtara sahip kayıtları (isim benzerliğine göre) eşleştirir; eşleşmeyenleri döndürür."""
     g1, g2 = defaultdict(list), defaultdict(list)
     for k in l1:
         g1[anahtar_fn(k)].append(k)
@@ -217,14 +247,15 @@ def _esle(l1, l2, anahtar_fn, yontem, tolerans, elden_dahil, eslesen):
     kalan1, kalan2 = [], []
     for anahtar in list(g1) + [x for x in g2 if x not in g1]:
         x1, x2 = g1.get(anahtar, []), g2.get(anahtar, [])
-        for a, b in zip(x1, x2):
+        ciftler, artan1, artan2 = _ciftle(x1, x2)
+        for a, b in ciftler:
             b_maas = b["maas"] + ((b["elden"] or 0) if elden_dahil else 0)
             fark = b_maas - a["maas"]
             eslesen.append({"a": a, "b": b, "b_maas": b_maas, "fark": fark,
                             "ayni": abs(fark) <= tolerans, "yontem": yontem,
                             "kontrol": yontem == "TC" and not isim_uyumlu(a["ad"], b["ad"])})
-        kalan1 += x1[len(x2):]
-        kalan2 += x2[len(x1):]
+        kalan1 += artan1
+        kalan2 += artan2
     return kalan1, kalan2
 
 
@@ -272,7 +303,7 @@ def sayfa_yaz(wb, ad, basliklar, satirlar, renkler=None, para_sutunlari=()):
     return ws
 
 
-def rapor_yaz(yol, ad1, ad2, eslesen, sadece1, sadece2, tolerans, elden_dahil=False):
+def rapor_yaz(yol, ad1, ad2, eslesen, sadece1, sadece2, tolerans, elden_dahil=False, tekrar=()):
     wb = Workbook()
     ozet = wb.active
     ozet.title = "Özet"
@@ -288,6 +319,7 @@ def rapor_yaz(yol, ad1, ad2, eslesen, sadece1, sadece2, tolerans, elden_dahil=Fa
         ("  Maaşı aynı olan", ayni),
         ("  Maaşı farklı olan", len(farkli)),
         ("  TC aynı ama İSİM FARKLI (kontrol edin)", sum(e["kontrol"] for e in eslesen)),
+        ("  Aynı TC birden fazla kişide geçen kayıt (kaynak dosya hatası?)", len(tekrar)),
         ("  (TC ile eşleşen / isimle eşleşen)",
          f"{sum(e['yontem'] == 'TC' for e in eslesen)} / {sum(e['yontem'] == 'İsim' for e in eslesen)}"),
         ("Sadece Dosya 1'de olan", len(sadece1)),
@@ -328,6 +360,11 @@ def rapor_yaz(yol, ad1, ad2, eslesen, sadece1, sadece2, tolerans, elden_dahil=Fa
     sayfa_yaz(wb, "Farklı Maaşlar", basliklar, [satir(e) for e in f], [KIRMIZI] * len(f), para)
     kont = [e for e in tum if e["kontrol"]]
     sayfa_yaz(wb, "İsim Kontrol", basliklar, [satir(e) for e in kont], [SARI] * len(kont), para)
+    if tekrar:
+        sayfa_yaz(wb, "Tekrarlayan TC", ["Dosya", "TC No", "İsim", "Okul", "Sayfa", "Excel satırı"],
+                  [[d, k["tc"], k["ad"], k["okul"], k["sayfa"], k["satir"]]
+                   for d, k in sorted(tekrar, key=lambda x: (x[0], x[1]["tc"]))],
+                  [SARI] * len(tekrar))
     sayfa_yaz(wb, "Sadece Dosya 1'de",
               ["Okul", "Bölüm / Sayfa", "TC No", "İsim", "Maaş", "Satır"],
               [[k["okul"], k["sayfa"], k["tc"], k["ad"], k["maas"], k["satir"]] for k in sadece1],
@@ -410,7 +447,11 @@ def main():
 
     eslesen, s1, s2 = karsilastir(k1, k2, a.tolerans, a.elden_dahil)
     cikti = a.cikti or (kaydet_sor("maas_karsilastirma.xlsx") if not (a.dosya1 and a.dosya2) else "maas_karsilastirma.xlsx")
-    rapor_yaz(cikti, d1, d2, eslesen, s1, s2, a.tolerans, a.elden_dahil)
+    tekrar = tekrar_tc_satirlari([("Dosya 1", k1), ("Dosya 2", k2)])
+    if tekrar:
+        print(f"UYARI: {len({(d, k['tc']) for d, k in tekrar})} TC numarası birden fazla farklı kişide geçiyor! "
+              "'Tekrarlayan TC' sayfasına bakın; kaynak dosyada TC yanlış yazılmış olabilir.")
+    rapor_yaz(cikti, d1, d2, eslesen, s1, s2, a.tolerans, a.elden_dahil, tekrar)
 
     farkli = sum(1 for e in eslesen if not e["ayni"])
     print(f"Dosya 1: {len(k1)} kişi ({len({k['sayfa'] for k in k1})} sayfa) | Dosya 2: {len(k2)} kişi")
