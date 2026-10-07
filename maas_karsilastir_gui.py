@@ -11,13 +11,21 @@ from tkinter import filedialog, messagebox, ttk
 
 import maas_karsilastir as mk
 
+OKUL_ADI = "Sivas Cumhuriyet Üniversitesi Vakıf Okulları"
+
+
+def kaynak_yolu(ad):
+    """Program klasöründeki (veya .exe içine gömülü) dosyanın yolu."""
+    taban = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(taban, ad)
+
 
 class Uygulama(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("Maaş Karşılaştırma")
-        self.geometry("720x560")
-        self.minsize(640, 500)
+        self.geometry("720x620")
+        self.minsize(640, 560)
         self.configure(bg="#f3f5f9")
         self.dosya1 = tk.StringVar()
         self.dosya2 = tk.StringVar()
@@ -25,8 +33,22 @@ class Uygulama(tk.Tk):
         self.tolerans = tk.StringVar(value="0")
         self.son_sonuc = None
         mk.SECICI = self.sutun_sor
+        self.logo = self._logo_yukle()
         self._stil()
         self._arayuz()
+
+    def _logo_yukle(self):
+        """logo.png varsa pencere simgesi ve başlık görseli olarak kullanır."""
+        yol = kaynak_yolu("logo.png")
+        if not os.path.isfile(yol):
+            return None
+        try:
+            ham = tk.PhotoImage(file=yol)
+            self.iconphoto(True, ham)
+            kucult = max(1, -(-ham.height() // 80))  # başlıkta en çok ~80 piksel yükseklik
+            return ham.subsample(kucult, kucult)
+        except tk.TclError:
+            return None
 
     def _stil(self):
         st = ttk.Style(self)
@@ -46,8 +68,12 @@ class Uygulama(tk.Tk):
         st.map("Ana.TButton", background=[("active", "#2a6aa3"), ("disabled", "#9db3c8")])
 
     def _arayuz(self):
+        if self.logo:
+            tk.Label(self, image=self.logo, bg="#f3f5f9").pack(pady=(12, 0))
+        ttk.Label(self, text=OKUL_ADI, font=("Segoe UI", 10),
+                  background="#f3f5f9", foreground="#555").pack(pady=(12 if not self.logo else 4, 0))
         ttk.Label(self, text="Maaş Karşılaştırma", font=("Segoe UI", 18, "bold"),
-                  background="#f3f5f9", foreground="#1f4e78").pack(pady=(14, 0))
+                  background="#f3f5f9", foreground="#1f4e78").pack()
         ttk.Label(self, text="İki Excel dosyasındaki maaşları TC no / isme göre karşılaştırır",
                   background="#f3f5f9", foreground="#555").pack(pady=(0, 10))
 

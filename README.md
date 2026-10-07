@@ -28,3 +28,6 @@ Windows'ta `exe_olustur.bat` dosyasına çift tıklayın. `dist\MaasKarsilastir.
 
 ### Hazır .exe indirmek
 GitHub deposunda **Actions** sekmesi > son "Windows exe olustur" çalışması > en altta **Artifacts** > `MaasKarsilastir-exe` (zip içinde `MaasKarsilastir.exe`). Python kurmaya gerek yok.
+
+### Logo ekleme
+Resmî logo dosyasını (PNG, tercihen kare) bu klasöre **`logo.png`** adıyla koyun. Pencerede başlık görseli ve pencere simgesi olarak görünür, `.exe` simgesi de olur. Dosyayı koyduktan sonra `.exe`yi yeniden derlemek gerekir (GitHub Actions kendiliğinden yapar).
