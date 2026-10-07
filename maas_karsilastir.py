@@ -12,6 +12,7 @@ Kullanım:
 Gereksinim: pip install openpyxl
 """
 import argparse
+import difflib
 import os
 import re
 import sys
@@ -45,10 +46,29 @@ def isim_anahtar(s):
     return re.sub(r"\s+", " ", s).strip()
 
 
+def isim_uyumlu(a, b):
+    """Kısa olan ismin her kelimesi diğer isimde (küçük yazım farkıyla) geçiyorsa True.
+    Eksik orta isim ve kelime sırası farkı sorun sayılmaz; 'Ahmet Turan Tosun' / 'Ahsen Tosun' uyumsuzdur."""
+    x, y = isim_anahtar(a).split(), isim_anahtar(b).split()
+    if len(x) > len(y):
+        x, y = y, x
+    return all(any(difflib.SequenceMatcher(None, k, t).ratio() >= 0.8 for t in y) for k in x)
+
+
+ASGARI_MAAS = 28075.0  # maaş hücresine "asgari" yazılırsa bu tutar sayılır (ayarlanabilir)
+
+
+def asgari_mi(v):
+    return isinstance(v, str) and "asgari" in tr_kucult(v).replace("ı", "i")
+
+
 def sayiya_cevir(v):
-    """Hücre değerini sayıya çevirir. '1.234,56' ve '1,234.56' gibi metinleri de anlar."""
+    """Hücre değerini sayıya çevirir. '1.234,56' ve '1,234.56' gibi metinleri de anlar.
+    Hücrede "asgari" yazıyorsa ASGARI_MAAS değerini döndürür."""
     if v is None or isinstance(v, bool):
         return None
+    if asgari_mi(v):
+        return ASGARI_MAAS
     if isinstance(v, (int, float)):
         return float(v)
     s = re.sub(r"[^\d,.\-]", "", str(v))
@@ -178,6 +198,7 @@ def kisileri_oku(yol, ad_sutun=None, maas_sutun=None, etiket="Dosya"):
             ad = satir[ad_i]
             if ad is None or not str(ad).strip():
                 continue
+            asgari = asgari_mi(satir[maas_i])
             maas = sayiya_cevir(satir[maas_i])
             if maas is None:
                 continue  # "TOPLAM" gibi sayısal olmayan satırlar
@@ -191,7 +212,7 @@ def kisileri_oku(yol, ad_sutun=None, maas_sutun=None, etiket="Dosya"):
             if okul_i is not None and okul_i < len(satir) and satir[okul_i] is not None:
                 okul = str(satir[okul_i]).strip()
             kayitlar.append({"ad": str(ad).strip(), "anahtar": isim_anahtar(ad), "tc": tc, "elden": elden,
-                             "okul": okul, "maas": maas, "sayfa": ws.title, "satir": r_no})
+                             "okul": okul, "maas": maas, "asgari": asgari, "sayfa": ws.title, "satir": r_no})
     return kayitlar, uyarilar
 
 
@@ -210,7 +231,8 @@ def _esle(l1, l2, anahtar_fn, yontem, tolerans, elden_dahil, eslesen):
             b_maas = b["maas"] + ((b["elden"] or 0) if elden_dahil else 0)
             fark = b_maas - a["maas"]
             eslesen.append({"a": a, "b": b, "b_maas": b_maas, "fark": fark,
-                            "ayni": abs(fark) <= tolerans, "yontem": yontem})
+                            "ayni": abs(fark) <= tolerans, "yontem": yontem,
+                            "kontrol": yontem == "TC" and not isim_uyumlu(a["ad"], b["ad"])})
         kalan1 += x1[len(x2):]
         kalan2 += x2[len(x1):]
     return kalan1, kalan2
@@ -275,12 +297,24 @@ def rapor_yaz(yol, ad1, ad2, eslesen, sadece1, sadece2, tolerans, elden_dahil=Fa
         ("Eşleşen kişi sayısı", len(eslesen)),
         ("  Maaşı aynı olan", ayni),
         ("  Maaşı farklı olan", len(farkli)),
+        ("  TC aynı ama İSİM FARKLI (kontrol edin)", sum(e["kontrol"] for e in eslesen)),
         ("  (TC ile eşleşen / isimle eşleşen)",
          f"{sum(e['yontem'] == 'TC' for e in eslesen)} / {sum(e['yontem'] == 'İsim' for e in eslesen)}"),
         ("Sadece Dosya 1'de olan", len(sadece1)),
         ("Sadece Dosya 2'de olan", len(sadece2)),
         ("", ""),
         ("Farkların toplamı (Dosya2 - Dosya1)", round(sum(e["fark"] for e in farkli), 2)),
+        ("", ""),
+        ("Dosya 1 genel toplam maaş", round(sum(e["a"]["maas"] for e in eslesen) + sum(k["maas"] for k in sadece1), 2)),
+        ("Dosya 2 genel toplam maaş",
+         round(sum(e["b_maas"] for e in eslesen)
+               + sum(k["maas"] + ((k["elden"] or 0) if elden_dahil else 0) for k in sadece2), 2)),
+        ("Eşleşenlerin toplamı - Dosya 1", round(sum(e["a"]["maas"] for e in eslesen), 2)),
+        ("Eşleşenlerin toplamı - Dosya 2", round(sum(e["b_maas"] for e in eslesen), 2)),
+        ("", ""),
+        (f"'Asgari' yazılı maaş sayısı (1 asgari = {ASGARI_MAAS:,.2f} TL)",
+         sum(e["a"]["asgari"] for e in eslesen) + sum(k["asgari"] for k in sadece1)
+         + sum(e["b"]["asgari"] for e in eslesen) + sum(k["asgari"] for k in sadece2)),
     ]
     for s in ozet_satirlar:
         ozet.append(s)
@@ -290,21 +324,26 @@ def rapor_yaz(yol, ad1, ad2, eslesen, sadece1, sadece2, tolerans, elden_dahil=Fa
     ozet.column_dimensions["B"].width = 40
 
     tum = sorted(eslesen, key=lambda e: (e["ayni"], -abs(e["fark"])))
-    basliklar = ["Okul", "Bölüm / Sayfa", "TC No", "İsim (Dosya 1)", "Maaş (Dosya 1)",
+    basliklar = ["Okul", "Bölüm / Sayfa", "TC No (Dosya 1)", "TC No (Dosya 2)", "İsim (Dosya 1)", "Maaş (Dosya 1)",
                  "İsim (Dosya 2)", "Maaş (Dosya 2)", "Elden (Dosya 2)", "Karşılaştırılan D2 Maaşı",
-                 "Fark (D2 - D1)", "Durum", "Eşleşme"]
+                 "Fark (D2 - D1)", "Durum", "Eşleşme", "Kontrol"]
 
     def satir(e):
         a, b = e["a"], e["b"]
-        return [a["okul"], a["sayfa"], a["tc"] or b["tc"], a["ad"], a["maas"], b["ad"], b["maas"], b["elden"],
+        return [a["okul"], a["sayfa"], a["tc"], b["tc"], a["ad"], a["maas"], b["ad"], b["maas"], b["elden"],
                 e["b_maas"], round(e["fark"], 2),
-                "Aynı" if e["ayni"] else ("Dosya 2 yüksek" if e["fark"] > 0 else "Dosya 1 yüksek"), e["yontem"]]
+                "Aynı" if e["ayni"] else ("Dosya 2 yüksek" if e["fark"] > 0 else "Dosya 1 yüksek"), e["yontem"],
+                "; ".join(x for x in ("İSİM FARKLI - kontrol edin" if e["kontrol"] else "",
+                                     "Dosya 1: ASGARİ" if a["asgari"] else "",
+                                     "Dosya 2: ASGARİ" if b["asgari"] else "") if x)]
 
-    para = ("E", "G", "H", "I", "J")
+    para = ("F", "H", "I", "J", "K")
     sayfa_yaz(wb, "Tüm Karşılaştırma", basliklar, [satir(e) for e in tum],
               [YESIL if e["ayni"] else KIRMIZI for e in tum], para)
     f = sorted(farkli, key=lambda e: -abs(e["fark"]))
     sayfa_yaz(wb, "Farklı Maaşlar", basliklar, [satir(e) for e in f], [KIRMIZI] * len(f), para)
+    kont = [e for e in tum if e["kontrol"]]
+    sayfa_yaz(wb, "İsim Kontrol", basliklar, [satir(e) for e in kont], [SARI] * len(kont), para)
     sayfa_yaz(wb, "Sadece Dosya 1'de",
               ["Okul", "Bölüm / Sayfa", "TC No", "İsim", "Maaş", "Satır"],
               [[k["okul"], k["sayfa"], k["tc"], k["ad"], k["maas"], k["satir"]] for k in sadece1],
@@ -347,6 +386,7 @@ def kaydet_sor(varsayilan):
 
 
 def main():
+    global ASGARI_MAAS
     p = argparse.ArgumentParser(description="İki Excel dosyasındaki maaşları isme göre karşılaştırır.")
     p.add_argument("dosya1", nargs="?", help="Sayfalara bölünmüş Excel (anaokulu, lise ...)")
     p.add_argument("dosya2", nargs="?", help="Tek listeli Excel")
@@ -354,12 +394,15 @@ def main():
     p.add_argument("--tolerans", type=float, default=0.0, help="Bu tutara kadar farkı 'aynı' say (varsayılan 0)")
     p.add_argument("--elden-dahil", action="store_true",
                    help="Dosya 2'de MAAŞ + ELDEN toplamını Dosya 1 maaşıyla karşılaştır")
+    p.add_argument("--asgari", type=float, default=ASGARI_MAAS,
+                   help="Maaş hücresinde 'asgari' yazan satırlar için tutar (varsayılan 28075)")
     p.add_argument("--ad1", help="Dosya 1 isim sütunu harfi (örn. B) - otomatik bulma yerine")
     p.add_argument("--maas1", help="Dosya 1 maaş sütunu harfi (örn. F)")
     p.add_argument("--ad2", help="Dosya 2 isim sütunu harfi")
     p.add_argument("--maas2", help="Dosya 2 maaş sütunu harfi")
     a = p.parse_args()
 
+    ASGARI_MAAS = a.asgari
     d1 = a.dosya1 or dosya_sor("1) Sayfalara bölünmüş Excel'i seçin")
     d2 = a.dosya2 or dosya_sor("2) Tek listeli Excel'i seçin")
     if not d1 or not d2:
@@ -392,6 +435,9 @@ def main():
     farkli = sum(1 for e in eslesen if not e["ayni"])
     print(f"Dosya 1: {len(k1)} kişi ({len({k['sayfa'] for k in k1})} sayfa) | Dosya 2: {len(k2)} kişi")
     print(f"Eşleşen: {len(eslesen)} | Maaşı farklı: {farkli} | Sadece D1: {len(s1)} | Sadece D2: {len(s2)}")
+    kontrol = sum(e["kontrol"] for e in eslesen)
+    if kontrol:
+        print(f"DİKKAT: {kontrol} kişide TC aynı ama isim farklı! 'İsim Kontrol' sayfasına bakın.")
     print(f"Sonuç kaydedildi: {os.path.abspath(cikti)}")
     if sys.platform.startswith("win") and not (a.dosya1 and a.dosya2):
         input("Kapatmak için Enter'a basın...")
