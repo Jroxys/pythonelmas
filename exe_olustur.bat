@@ -1,0 +1,7 @@
+@echo off
+chcp 65001 >nul
+python -m pip install -q openpyxl pyinstaller
+python -m PyInstaller --onefile --name MaasKarsilastir "%~dp0maas_karsilastir.py"
+echo.
+echo Hazir: dist\MaasKarsilastir.exe
+pause

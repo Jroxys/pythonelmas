@@ -22,3 +22,6 @@ Seçenekler: `--tolerans 1` (1 TL farkı aynı say), `--ad1 B --maas1 F --ad2 A 
 - Büyük/küçük harf, Türkçe karakter (İ/ı, ş, ğ...) ve fazla boşluk farklarını yok sayar.
 - `1.234,56` gibi metin olarak yazılmış maaşları da okur; TOPLAM satırlarını atlar.
 - Sonuç Excel dosyasında sayfalar: Özet, Tüm Karşılaştırma, Farklı Maaşlar, Sadece Dosya 1'de, Sadece Dosya 2'de.
+
+### .exe yapmak (Python olmayan bilgisayarlar için)
+Windows'ta `exe_olustur.bat` dosyasına çift tıklayın. `dist\MaasKarsilastir.exe` oluşur; bu tek dosyayı istediğiniz kişiye verebilirsiniz, Python kurması gerekmez.
