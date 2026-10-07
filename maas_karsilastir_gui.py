@@ -23,7 +23,6 @@ class Uygulama(tk.Tk):
         self.dosya2 = tk.StringVar()
         self.elden = tk.BooleanVar(value=False)
         self.tolerans = tk.StringVar(value="0")
-        self.asgari = tk.StringVar(value="28075")
         self.son_sonuc = None
         mk.SECICI = self.sutun_sor
         self._stil()
@@ -66,10 +65,6 @@ class Uygulama(tk.Tk):
         ttk.Spinbox(ayar, from_=0, to=100000, width=8, textvariable=self.tolerans).grid(
             row=1, column=1, sticky="w", padx=8, pady=(8, 0))
 
-        ttk.Label(ayar, text="Asgari ücret (TL) - maaş hücresinde 'asgari' yazanlara bu tutar sayılır:").grid(
-            row=2, column=0, sticky="w", pady=(8, 0))
-        ttk.Spinbox(ayar, from_=0, to=1000000, width=8, textvariable=self.asgari).grid(
-            row=2, column=1, sticky="w", padx=8, pady=(8, 0))
 
         self.btn = ttk.Button(self, text="MAAŞLARI KARŞILAŞTIR", style="Ana.TButton", command=self.calistir)
         self.btn.pack(fill="x", padx=18, pady=12)
@@ -139,12 +134,6 @@ class Uygulama(tk.Tk):
         except ValueError:
             messagebox.showwarning("Hatalı tolerans", "Tolerans bir sayı olmalı (örn. 0 veya 1).")
             return
-        try:
-            asgari = float(self.asgari.get().replace(",", "."))
-        except ValueError:
-            messagebox.showwarning("Hatalı asgari ücret", "Asgari ücret bir sayı olmalı (örn. 28075).")
-            return
-        mk.ASGARI_MAAS = asgari
         cikti = filedialog.asksaveasfilename(title="Sonuç dosyasını kaydet", defaultextension=".xlsx",
                                              initialfile="maas_karsilastirma.xlsx",
                                              filetypes=[("Excel", "*.xlsx")])
