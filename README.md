@@ -25,3 +25,6 @@ Seçenekler: `--tolerans 1` (1 TL farkı aynı say), `--ad1 B --maas1 F --ad2 A 
 
 ### .exe yapmak (Python olmayan bilgisayarlar için)
 Windows'ta `exe_olustur.bat` dosyasına çift tıklayın. `dist\MaasKarsilastir.exe` oluşur; bu tek dosyayı istediğiniz kişiye verebilirsiniz, Python kurması gerekmez.
+
+### Hazır .exe indirmek
+GitHub deposunda **Actions** sekmesi > son "Windows exe olustur" çalışması > en altta **Artifacts** > `MaasKarsilastir-exe` (zip içinde `MaasKarsilastir.exe`). Python kurmaya gerek yok.
