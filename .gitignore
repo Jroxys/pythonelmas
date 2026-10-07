@@ -2,3 +2,7 @@ build/
 dist/
 *.spec
 __pycache__/
+*.xlsx
+*.xlsm
+*.xls
+*.csv
