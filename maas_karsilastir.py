@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+"""İki Excel dosyasındaki maaşları isme göre karşılaştırır.
+
+Dosya 1: Sayfalara bölünmüş (Anaokulu, İlkokul, Ortaokul, Lise ...) - tüm sayfalar birleştirilir.
+Dosya 2: Tek liste (tek sayfa).
+
+Kullanım:
+    python maas_karsilastir.py                       # pencere / soru-cevap ile sorar
+    python maas_karsilastir.py a.xlsx b.xlsx         # doğrudan çalıştırır
+    python maas_karsilastir.py a.xlsx b.xlsx -o sonuc.xlsx --tolerans 1
+
+Gereksinim: pip install openpyxl
+"""
+import argparse
+import os
+import re
+import sys
+import unicodedata
+from collections import defaultdict
+
+try:
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+except ImportError:
+    sys.exit("openpyxl kurulu değil. Şunu çalıştırın:  pip install openpyxl")
+
+AD_ANAHTAR = ["adı soyadı", "ad soyad", "adi soyadi", "isim", "personel", "ad", "adı", "çalışan"]
+MAAS_ANAHTAR = ["maaş", "maas", "ücret", "ucret", "net", "brüt", "brut", "tutar"]
+
+
+# ---------------------------------------------------------------- yardımcılar
+def tr_kucult(s):
+    """Türkçe uyumlu küçük harf (İ->i, I->ı)."""
+    return s.replace("İ", "i").replace("I", "ı").lower()
+
+
+def isim_anahtar(s):
+    """Karşılaştırma anahtarı: büyük/küçük harf, fazla boşluk ve Türkçe karakter farkını yok sayar."""
+    s = tr_kucult(str(s)).strip()
+    s = s.translate(str.maketrans("çğıöşü", "cgiosu"))
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = re.sub(r"[^\w\s]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def sayiya_cevir(v):
+    """Hücre değerini sayıya çevirir. '1.234,56' ve '1,234.56' gibi metinleri de anlar."""
+    if v is None or isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    s = re.sub(r"[^\d,.\-]", "", str(v))
+    if not s or s in "-.,":
+        return None
+    if "," in s and "." in s:
+        if s.rfind(",") > s.rfind("."):
+            s = s.replace(".", "").replace(",", ".")
+        else:
+            s = s.replace(",", "")
+    elif "," in s:
+        s = s.replace(",", ".")
+    elif s.count(".") > 1 or re.fullmatch(r"-?\d{1,3}\.\d{3}", s):
+        s = s.replace(".", "")  # 1.234 veya 1.234.567 -> binlik ayracı
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
+
+def baslik_bul(satirlar):
+    """İlk 20 satırda başlık satırını ve ad / maaş sütun adaylarını bulur."""
+    en_iyi = None
+    for i, satir in enumerate(satirlar[:20]):
+        ad_adaylari, maas_adaylari = [], []
+        for j, h in enumerate(satir):
+            if h is None or isinstance(h, (int, float)):
+                continue
+            t = tr_kucult(str(h)).strip()
+            if not t:
+                continue
+            if any(t == k or (len(k) > 3 and k in t) for k in AD_ANAHTAR):
+                ad_adaylari.append(j)
+            if any(k in t for k in MAAS_ANAHTAR):
+                maas_adaylari.append(j)
+        if ad_adaylari and maas_adaylari:
+            return i, ad_adaylari, maas_adaylari
+        if en_iyi is None and (ad_adaylari or maas_adaylari):
+            en_iyi = (i, ad_adaylari, maas_adaylari)
+    return en_iyi
+
+
+def sec(mesaj, secenekler):
+    """Birden fazla aday varsa kullanıcıya sorar (etkileşimsizse ilkini seçer)."""
+    if len(secenekler) == 1 or not sys.stdin.isatty():
+        return secenekler[0][0]
+    print(mesaj)
+    for n, (_, etiket) in enumerate(secenekler, 1):
+        print(f"  {n}) {etiket}")
+    while True:
+        c = input("Seçiminiz [1]: ").strip() or "1"
+        if c.isdigit() and 1 <= int(c) <= len(secenekler):
+            return secenekler[int(c) - 1][0]
+
+
+def sutun_sec(mesaj, tur, adaylar, baslik, secilen):
+    """Daha önce seçilen başlık bu sayfada da varsa onu kullanır, yoksa sorar."""
+    if tur in secilen:
+        for j in adaylar:
+            if tr_kucult(str(baslik[j])).strip() == secilen[tur]:
+                return j
+    j = sec(mesaj, [(j, f"{get_column_letter(j + 1)}: {baslik[j]}") for j in adaylar])
+    secilen[tur] = tr_kucult(str(baslik[j])).strip()
+    return j
+
+
+def harf_to_idx(h):
+    n = 0
+    for ch in h.upper():
+        n = n * 26 + ord(ch) - 64
+    return n - 1
+
+
+def kisileri_oku(yol, ad_sutun=None, maas_sutun=None, etiket="Dosya"):
+    """Dosyadaki tüm sayfalardan (isim, maaş, sayfa, satır) kayıtlarını okur."""
+    wb = load_workbook(yol, data_only=True, read_only=True)
+    kayitlar, uyarilar = [], []
+    secilen = {}  # ilk sayfada seçilen başlıklar, diğer sayfalarda aynen kullanılır
+    for ws in wb.worksheets:
+        satirlar = [list(r) for r in ws.iter_rows(values_only=True)]
+        if not any(any(c is not None for c in r) for r in satirlar):
+            continue
+        if ad_sutun and maas_sutun:
+            bas, ad_i, maas_i = 0, harf_to_idx(ad_sutun), harf_to_idx(maas_sutun)
+            # başlık varsa atla: maaş sütunu sayı olmayan ilk satırlar
+            while bas < len(satirlar) and (len(satirlar[bas]) <= maas_i or sayiya_cevir(satirlar[bas][maas_i]) is None):
+                bas += 1
+            bas -= 1
+        else:
+            b = baslik_bul(satirlar)
+            if not b or not b[1] or not b[2]:
+                uyarilar.append(f"[{etiket}] '{ws.title}' sayfasında ad/maaş başlığı bulunamadı, atlandı.")
+                continue
+            bas, adlar, maaslar = b
+            baslik = satirlar[bas]
+            ad_i = sutun_sec(f"[{etiket} / {ws.title}] İsim sütunu hangisi?", "ad", adlar, baslik, secilen)
+            maas_i = sutun_sec(f"[{etiket} / {ws.title}] Maaş sütunu hangisi?", "maas", maaslar, baslik, secilen)
+        for r_no, satir in enumerate(satirlar[bas + 1:], start=bas + 2):
+            if len(satir) <= max(ad_i, maas_i):
+                continue
+            ad = satir[ad_i]
+            if ad is None or not str(ad).strip():
+                continue
+            maas = sayiya_cevir(satir[maas_i])
+            if maas is None:
+                continue  # "TOPLAM" gibi sayısal olmayan satırlar
+            if isim_anahtar(ad) in ("toplam", "genel toplam", "ara toplam"):
+                continue
+            kayitlar.append({"ad": str(ad).strip(), "anahtar": isim_anahtar(ad),
+                             "maas": maas, "sayfa": ws.title, "satir": r_no})
+    return kayitlar, uyarilar
+
+
+# ---------------------------------------------------------------- karşılaştırma
+def karsilastir(k1, k2, tolerans=0.0):
+    """Aynı isimler birden fazlaysa sırayla eşleştirir (1. ile 1., 2. ile 2.)."""
+    g1, g2 = defaultdict(list), defaultdict(list)
+    for k in k1:
+        g1[k["anahtar"]].append(k)
+    for k in k2:
+        g2[k["anahtar"]].append(k)
+    eslesen, sadece1, sadece2 = [], [], []
+    for anahtar in list(g1) + [a for a in g2 if a not in g1]:
+        l1, l2 = g1.get(anahtar, []), g2.get(anahtar, [])
+        for a, b in zip(l1, l2):
+            fark = b["maas"] - a["maas"]
+            eslesen.append({"a": a, "b": b, "fark": fark, "ayni": abs(fark) <= tolerans})
+        sadece1 += l1[len(l2):]
+        sadece2 += l2[len(l1):]
+    return eslesen, sadece1, sadece2
+
+
+# ---------------------------------------------------------------- Excel çıktısı
+BASLIK = PatternFill("solid", fgColor="1F4E78")
+KIRMIZI = PatternFill("solid", fgColor="F8CBAD")
+YESIL = PatternFill("solid", fgColor="C6E0B4")
+SARI = PatternFill("solid", fgColor="FFE699")
+
+
+def sayfa_yaz(wb, ad, basliklar, satirlar, renkler=None, para_sutunlari=()):
+    ws = wb.create_sheet(ad)
+    ws.append(basliklar)
+    for h in ws[1]:
+        h.font = Font(bold=True, color="FFFFFF")
+        h.fill = BASLIK
+        h.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for n, s in enumerate(satirlar):
+        ws.append(s)
+        if renkler and renkler[n]:
+            for c in ws[ws.max_row]:
+                c.fill = renkler[n]
+    for col in para_sutunlari:
+        for c in ws[col][1:]:
+            c.number_format = "#,##0.00"
+    for i, h in enumerate(basliklar, 1):
+        uz = max([len(str(h))] + [len(str(s[i - 1])) for s in satirlar if i - 1 < len(s)])
+        ws.column_dimensions[get_column_letter(i)].width = min(max(uz + 3, 12), 45)
+    ws.freeze_panes = "A2"
+    if satirlar:
+        ws.auto_filter.ref = ws.dimensions
+    return ws
+
+
+def rapor_yaz(yol, ad1, ad2, eslesen, sadece1, sadece2, tolerans):
+    wb = Workbook()
+    ozet = wb.active
+    ozet.title = "Özet"
+    farkli = [e for e in eslesen if not e["ayni"]]
+    ayni = len(eslesen) - len(farkli)
+    ozet_satirlar = [
+        ("Dosya 1 (sayfalı)", os.path.basename(ad1)),
+        ("Dosya 2 (tek liste)", os.path.basename(ad2)),
+        ("Tolerans (TL)", tolerans),
+        ("", ""),
+        ("Eşleşen kişi sayısı", len(eslesen)),
+        ("  Maaşı aynı olan", ayni),
+        ("  Maaşı farklı olan", len(farkli)),
+        ("Sadece Dosya 1'de olan", len(sadece1)),
+        ("Sadece Dosya 2'de olan", len(sadece2)),
+        ("", ""),
+        ("Farkların toplamı (Dosya2 - Dosya1)", round(sum(e["fark"] for e in farkli), 2)),
+    ]
+    for s in ozet_satirlar:
+        ozet.append(s)
+    for r in ozet["A"]:
+        r.font = Font(bold=True)
+    ozet.column_dimensions["A"].width = 40
+    ozet.column_dimensions["B"].width = 40
+
+    tum = sorted(eslesen, key=lambda e: (e["ayni"], -abs(e["fark"])))
+    basliklar = ["İsim (Dosya 1)", "Bölüm / Sayfa", "Maaş (Dosya 1)",
+                 "İsim (Dosya 2)", "Maaş (Dosya 2)", "Fark (D2 - D1)", "Durum"]
+
+    def satir(e):
+        return [e["a"]["ad"], e["a"]["sayfa"], e["a"]["maas"], e["b"]["ad"], e["b"]["maas"],
+                round(e["fark"], 2), "Aynı" if e["ayni"] else ("Dosya 2 yüksek" if e["fark"] > 0 else "Dosya 1 yüksek")]
+
+    sayfa_yaz(wb, "Tüm Karşılaştırma", basliklar, [satir(e) for e in tum],
+              [YESIL if e["ayni"] else KIRMIZI for e in tum], ("C", "E", "F"))
+    f = sorted(farkli, key=lambda e: -abs(e["fark"]))
+    sayfa_yaz(wb, "Farklı Maaşlar", basliklar, [satir(e) for e in f], [KIRMIZI] * len(f), ("C", "E", "F"))
+    sayfa_yaz(wb, "Sadece Dosya 1'de",
+              ["İsim", "Bölüm / Sayfa", "Maaş", "Satır"],
+              [[k["ad"], k["sayfa"], k["maas"], k["satir"]] for k in sadece1],
+              [SARI] * len(sadece1), ("C",))
+    sayfa_yaz(wb, "Sadece Dosya 2'de",
+              ["İsim", "Sayfa", "Maaş", "Satır"],
+              [[k["ad"], k["sayfa"], k["maas"], k["satir"]] for k in sadece2],
+              [SARI] * len(sadece2), ("C",))
+    wb.save(yol)
+
+
+# ---------------------------------------------------------------- dosya seçimi
+def dosya_sor(baslik, varsayilan=None):
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        kok = tk.Tk()
+        kok.withdraw()
+        kok.attributes("-topmost", True)
+        yol = filedialog.askopenfilename(title=baslik, filetypes=[("Excel", "*.xlsx *.xlsm")])
+        kok.destroy()
+        return yol
+    except Exception:
+        return input(f"{baslik} (dosya yolu): ").strip().strip('"')
+
+
+def kaydet_sor(varsayilan):
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        kok = tk.Tk()
+        kok.withdraw()
+        kok.attributes("-topmost", True)
+        yol = filedialog.asksaveasfilename(title="Sonuç dosyasını kaydet", defaultextension=".xlsx",
+                                           initialfile=varsayilan, filetypes=[("Excel", "*.xlsx")])
+        kok.destroy()
+        return yol or varsayilan
+    except Exception:
+        return varsayilan
+
+
+def main():
+    p = argparse.ArgumentParser(description="İki Excel dosyasındaki maaşları isme göre karşılaştırır.")
+    p.add_argument("dosya1", nargs="?", help="Sayfalara bölünmüş Excel (anaokulu, lise ...)")
+    p.add_argument("dosya2", nargs="?", help="Tek listeli Excel")
+    p.add_argument("-o", "--cikti", help="Sonuç dosyası (varsayılan: maas_karsilastirma.xlsx)")
+    p.add_argument("--tolerans", type=float, default=0.0, help="Bu tutara kadar farkı 'aynı' say (varsayılan 0)")
+    p.add_argument("--ad1", help="Dosya 1 isim sütunu harfi (örn. B) - otomatik bulma yerine")
+    p.add_argument("--maas1", help="Dosya 1 maaş sütunu harfi (örn. F)")
+    p.add_argument("--ad2", help="Dosya 2 isim sütunu harfi")
+    p.add_argument("--maas2", help="Dosya 2 maaş sütunu harfi")
+    a = p.parse_args()
+
+    d1 = a.dosya1 or dosya_sor("1) Sayfalara bölünmüş Excel'i seçin")
+    d2 = a.dosya2 or dosya_sor("2) Tek listeli Excel'i seçin")
+    if not d1 or not d2:
+        sys.exit("Dosya seçilmedi.")
+    for d in (d1, d2):
+        if not os.path.isfile(d):
+            sys.exit(f"Dosya bulunamadı: {d}")
+        if d.lower().endswith(".xls"):
+            sys.exit(f"'{d}' eski .xls biçiminde. Excel'de 'Farklı Kaydet' ile .xlsx yapıp tekrar deneyin.")
+
+    k1, u1 = kisileri_oku(d1, a.ad1, a.maas1, "Dosya 1")
+    k2, u2 = kisileri_oku(d2, a.ad2, a.maas2, "Dosya 2")
+    for u in u1 + u2:
+        print("UYARI:", u)
+    if not k1 or not k2:
+        sys.exit("Dosyalardan kayıt okunamadı. Başlıkları kontrol edin veya --ad1/--maas1 ... ile sütun belirtin.")
+
+    for etiket, k in (("Dosya 1", k1), ("Dosya 2", k2)):
+        sayac = defaultdict(int)
+        for x in k:
+            sayac[x["anahtar"]] += 1
+        tekrar = [x for x, n in sayac.items() if n > 1]
+        if tekrar:
+            print(f"UYARI: {etiket}'de aynı isimle birden fazla kayıt var ({len(tekrar)} isim); sırayla eşleştirildi.")
+
+    eslesen, s1, s2 = karsilastir(k1, k2, a.tolerans)
+    cikti = a.cikti or (kaydet_sor("maas_karsilastirma.xlsx") if not (a.dosya1 and a.dosya2) else "maas_karsilastirma.xlsx")
+    rapor_yaz(cikti, d1, d2, eslesen, s1, s2, a.tolerans)
+
+    farkli = sum(1 for e in eslesen if not e["ayni"])
+    print(f"Dosya 1: {len(k1)} kişi ({len({k['sayfa'] for k in k1})} sayfa) | Dosya 2: {len(k2)} kişi")
+    print(f"Eşleşen: {len(eslesen)} | Maaşı farklı: {farkli} | Sadece D1: {len(s1)} | Sadece D2: {len(s2)}")
+    print(f"Sonuç kaydedildi: {os.path.abspath(cikti)}")
+    if sys.platform.startswith("win") and not (a.dosya1 and a.dosya2):
+        input("Kapatmak için Enter'a basın...")
+
+
+if __name__ == "__main__":
+    main()
