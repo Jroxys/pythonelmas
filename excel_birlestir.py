@@ -228,6 +228,21 @@ def main():
         cikti = yeni
         hedef.kaydet(cikti)
 
+    # Doğrulama: çıktı ile hedef karşılaştırılır; telefon/e-posta dışında fark olmamalı
+    cikti_satirlar = satirlari_oku(cikti)
+    izinli = {h_sut["tel"], h_sut["eposta"]}
+    farklar = []
+    if len(cikti_satirlar) != len(h_satirlar):
+        farklar.append(f"Satır sayısı değişmiş: {len(h_satirlar)} -> {len(cikti_satirlar)}")
+    for r, (eski, yeni) in enumerate(zip(h_satirlar, cikti_satirlar)):
+        for c in range(max(len(eski), len(yeni))):
+            e = eski[c] if c < len(eski) else None
+            y = yeni[c] if c < len(yeni) else None
+            if c in izinli and r > h_satir:
+                continue
+            if e != y and not (e in (None, "") and y in (None, "")):
+                farklar.append(f"Satır {r + 1}, sütun {c + 1}: '{e}' -> '{y}'")
+
     satirlar_ = [f"Tam eşleşen: {tam_eslesen} | Sadece TC ile eşleşen: {len(tc_eslesen)} "
                  f"| Bulunamayan: {len(bulunamayan)} | Çıktı: {cikti}"]
     if tc_eslesen:
@@ -236,6 +251,11 @@ def main():
     if bulunamayan:
         satirlar_.append("\nKaynakta TC'si hiç yok (boş bıraktım):")
         satirlar_ += ["  " + s for s in bulunamayan]
+    if farklar:
+        satirlar_.append("\nUYARI: telefon/e-posta dışında değişen hücreler var:")
+        satirlar_ += ["  " + f for f in farklar[:30]]
+    else:
+        satirlar_.append("\nKontrol: telefon/e-posta dışındaki tüm hücreler hedef dosyayla aynı.")
     metin = "\n".join(satirlar_)
     print(metin)
     if pencere:
