@@ -1,6 +1,7 @@
 """Telefon ve e-posta bilgilerini bir Excel'den diğerine TCKN + ad + soyad eşleşmesiyle aktarır.
 
 Kullanım:
+    python excel_birlestir.py                      (dosya seçme ekranları açılır)
     python excel_birlestir.py KAYNAK.xlsx HEDEF.xlsx [-o CIKTI.xlsx]
 
 KAYNAK : telefon ve e-posta dolu olan dosya
@@ -62,12 +63,39 @@ def baslik_bul(ws):
     sys.exit(f"Başlık satırı bulunamadı: {ws.title}")
 
 
+def dosya_sec():
+    """Sırayla kaynak ve hedef Excel'i seçtirir, çıktı için kayıt yeri sorar."""
+    import tkinter as tk
+    from tkinter import filedialog
+
+    pencere = tk.Tk()
+    pencere.withdraw()
+    pencere.attributes("-topmost", True)
+    tipler = [("Excel dosyaları", "*.xlsx *.xlsm"), ("Tüm dosyalar", "*.*")]
+    kaynak = filedialog.askopenfilename(title="1) Telefon/e-posta DOLU Excel'i seçin", filetypes=tipler)
+    if not kaynak:
+        sys.exit("Kaynak dosya seçilmedi.")
+    hedef = filedialog.askopenfilename(title="2) Bilgilerin GİRİLECEĞİ Excel'i seçin", filetypes=tipler)
+    if not hedef:
+        sys.exit("Hedef dosya seçilmedi.")
+    cikti = filedialog.asksaveasfilename(
+        title="Sonuç nereye kaydedilsin?", defaultextension=".xlsx",
+        initialfile="birlesik.xlsx", filetypes=[("Excel", "*.xlsx")])
+    if not cikti:
+        sys.exit("Kayıt yeri seçilmedi.")
+    return kaynak, hedef, cikti, pencere
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("kaynak", help="Telefon/e-posta dolu Excel")
-    p.add_argument("hedef", help="Ad, TC, doğum tarihi dolu Excel")
-    p.add_argument("-o", "--cikti", default="birlesik.xlsx", help="Çıktı dosyası (varsayılan: birlesik.xlsx)")
+    p.add_argument("kaynak", nargs="?", help="Telefon/e-posta dolu Excel")
+    p.add_argument("hedef", nargs="?", help="Ad, TC, doğum tarihi dolu Excel")
+    p.add_argument("-o", "--cikti", help="Çıktı dosyası (varsayılan: hedef dosyanın yanına *_dolu.xlsx)")
     a = p.parse_args()
+
+    pencere = None
+    if not (a.kaynak and a.hedef):
+        a.kaynak, a.hedef, a.cikti, pencere = dosya_sec()
 
     kws = load_workbook(a.kaynak, data_only=True).active
     k_satir, k_sut = baslik_bul(kws)
@@ -112,10 +140,15 @@ def main():
             hws.cell(r, h_sut["eposta"]).value = eposta
         eslesen += 1
 
-    hwb.save(a.cikti)
-    print(f"Eşleşen: {eslesen} | Eşleşmeyen: {eslesmeyen} | Çıktı: {a.cikti}")
-    for r, tc, ad, soyad in eslesmeyenler:
-        print(f"  Satır {r}: {tc} {ad} {soyad} -> kaynakta bulunamadı")
+    cikti = a.cikti or re.sub(r"\.xls[xm]$", "", a.hedef, flags=re.I) + "_dolu.xlsx"
+    hwb.save(cikti)
+    mesaj = f"Eşleşen: {eslesen} | Eşleşmeyen: {eslesmeyen} | Çıktı: {cikti}"
+    ayrinti = "".join(
+        f"\n  Satır {r}: {tc} {ad} {soyad} -> kaynakta bulunamadı" for r, tc, ad, soyad in eslesmeyenler)
+    print(mesaj + ayrinti)
+    if pencere:
+        from tkinter import messagebox
+        messagebox.showinfo("Tamamlandı", mesaj + ayrinti[:1500])
 
 
 if __name__ == "__main__":
