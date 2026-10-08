@@ -13,8 +13,8 @@ import sys
 
 from openpyxl import load_workbook
 
-# i, İ, ı, I aynı harf sayılır (eşleştirme için hepsi "I" olur)
-I_HARFLERI = str.maketrans({"i": "I", "İ": "I", "ı": "I"})
+# Türkçe harfler ASCII karşılıklarıyla aynı sayılır (İ/ı/i/I->I, Ş->S, Ç->C, Ğ->G, Ö->O, Ü->U)
+HARF_ESLE = str.maketrans("iİıIşŞçÇğĞöÖüÜ", "IIIISSCCGGOOUU")
 
 
 def ac(yol, **kw):
@@ -47,11 +47,11 @@ def ac(yol, **kw):
 
 
 def norm_ad(deger):
-    """Boşlukları sadeleştirir, büyük harfe çevirir; i/İ/ı/I aynı harf olur."""
+    """Boşlukları sadeleştirir, büyük harfe çevirir; Türkçe harfler ASCII karşılığıyla aynı sayılır."""
     if deger is None:
         return ""
     s = " ".join(str(deger).split())
-    return s.translate(I_HARFLERI).upper()
+    return s.translate(HARF_ESLE).upper()
 
 
 def norm_tc(deger):
@@ -86,7 +86,7 @@ def baslik_bul(ws):
             if isinstance(hucre.value, str):
                 metin = norm_ad(hucre.value)
                 for ad, onek in anahtarlar.items():
-                    if ad not in sutunlar and metin.startswith(onek):
+                    if ad not in sutunlar and metin.startswith(norm_ad(onek)):
                         sutunlar[ad] = hucre.column
         if "tc" in sutunlar and "ad" in sutunlar:
             return satir[0].row, sutunlar
