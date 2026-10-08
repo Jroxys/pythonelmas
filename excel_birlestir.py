@@ -13,15 +13,16 @@ import sys
 
 from openpyxl import load_workbook
 
-TR_UPPER = str.maketrans({"i": "İ", "ı": "I"})
+# i, İ, ı, I aynı harf sayılır (eşleştirme için hepsi "I" olur)
+I_HARFLERI = str.maketrans({"i": "I", "İ": "I", "ı": "I"})
 
 
 def norm_ad(deger):
-    """Boşlukları sadeleştirip Türkçe kurallarıyla büyük harfe çevirir."""
+    """Boşlukları sadeleştirir, büyük harfe çevirir; i/İ/ı/I aynı harf olur."""
     if deger is None:
         return ""
     s = " ".join(str(deger).split())
-    return s.translate(TR_UPPER).upper()
+    return s.translate(I_HARFLERI).upper()
 
 
 def norm_tc(deger):
