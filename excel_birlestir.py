@@ -2,7 +2,7 @@
 
 Kullanım:
     python excel_birlestir.py                      (dosya seçme ekranları açılır)
-    python excel_birlestir.py KAYNAK.xlsx HEDEF.xlsx [-o CIKTI.xlsx]
+    python excel_birlestir.py KAYNAK HEDEF [-o CIKTI.xlsx]   (.xlsx veya eski .xls)
 
 KAYNAK : telefon ve e-posta dolu olan dosya
 HEDEF  : ad, soyad, TC ve doğum tarihi dolu olan dosya (formatı korunarak doldurulur)
@@ -15,6 +15,35 @@ from openpyxl import load_workbook
 
 # i, İ, ı, I aynı harf sayılır (eşleştirme için hepsi "I" olur)
 I_HARFLERI = str.maketrans({"i": "I", "İ": "I", "ı": "I"})
+
+
+def ac(yol, **kw):
+    """Excel'i açar. Eski .xls ise xlrd ile okuyup bellekte .xlsx çalışma kitabına çevirir."""
+    if not yol.lower().endswith(".xls"):
+        return load_workbook(yol, **kw)
+    try:
+        import xlrd
+    except ImportError:
+        sys.exit("Eski .xls dosyası için önce şunu çalıştırın: pip install xlrd")
+    from openpyxl import Workbook
+
+    kitap = xlrd.open_workbook(yol)
+    sayfa = kitap.sheet_by_index(0)
+    wb = Workbook()
+    ws = wb.active
+    for r in range(sayfa.nrows):
+        for c in range(sayfa.ncols):
+            hucre = sayfa.cell(r, c)
+            deger = hucre.value
+            if hucre.ctype == xlrd.XL_CELL_DATE:
+                d = xlrd.xldate_as_datetime(deger, kitap.datemode)
+                deger = d.strftime("%d.%m.%Y")
+            elif hucre.ctype == xlrd.XL_CELL_NUMBER and float(deger).is_integer():
+                deger = int(deger)
+            elif hucre.ctype in (xlrd.XL_CELL_EMPTY, xlrd.XL_CELL_BLANK):
+                continue
+            ws.cell(r + 1, c + 1, deger)
+    return wb
 
 
 def norm_ad(deger):
@@ -72,7 +101,7 @@ def dosya_sec():
     pencere = tk.Tk()
     pencere.withdraw()
     pencere.attributes("-topmost", True)
-    tipler = [("Excel dosyaları", "*.xlsx *.xlsm"), ("Tüm dosyalar", "*.*")]
+    tipler = [("Excel dosyaları", "*.xlsx *.xlsm *.xls"), ("Tüm dosyalar", "*.*")]
     kaynak = filedialog.askopenfilename(title="1) Telefon/e-posta DOLU Excel'i seçin", filetypes=tipler)
     if not kaynak:
         sys.exit("Kaynak dosya seçilmedi.")
@@ -98,7 +127,7 @@ def main():
     if not (a.kaynak and a.hedef):
         a.kaynak, a.hedef, a.cikti, pencere = dosya_sec()
 
-    kws = load_workbook(a.kaynak, data_only=True).active
+    kws = ac(a.kaynak, data_only=True).active
     k_satir, k_sut = baslik_bul(kws)
 
     # (tc, ad, soyad) -> (telefon, eposta)
@@ -114,7 +143,7 @@ def main():
         eposta = str(eposta).strip() if eposta not in (None, "") else None
         kaynak[(tc, ad, soyad)] = (tel, eposta)
 
-    hwb = load_workbook(a.hedef)
+    hwb = ac(a.hedef)
     hws = hwb.active
     h_satir, h_sut = baslik_bul(hws)
     for gerekli in ("tel", "eposta"):
@@ -141,7 +170,7 @@ def main():
             hws.cell(r, h_sut["eposta"]).value = eposta
         eslesen += 1
 
-    cikti = a.cikti or re.sub(r"\.xls[xm]$", "", a.hedef, flags=re.I) + "_dolu.xlsx"
+    cikti = a.cikti or re.sub(r"\.xls[xm]?$", "", a.hedef, flags=re.I) + "_dolu.xlsx"
     hwb.save(cikti)
     mesaj = f"Eşleşen: {eslesen} | Eşleşmeyen: {eslesmeyen} | Çıktı: {cikti}"
     ayrinti = "".join(
