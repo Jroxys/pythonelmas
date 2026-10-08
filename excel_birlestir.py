@@ -1,0 +1,122 @@
+"""Telefon ve e-posta bilgilerini bir Excel'den diğerine TCKN + ad + soyad eşleşmesiyle aktarır.
+
+Kullanım:
+    python excel_birlestir.py KAYNAK.xlsx HEDEF.xlsx [-o CIKTI.xlsx]
+
+KAYNAK : telefon ve e-posta dolu olan dosya
+HEDEF  : ad, soyad, TC ve doğum tarihi dolu olan dosya (formatı korunarak doldurulur)
+"""
+import argparse
+import re
+import sys
+
+from openpyxl import load_workbook
+
+TR_UPPER = str.maketrans({"i": "İ", "ı": "I"})
+
+
+def norm_ad(deger):
+    """Boşlukları sadeleştirip Türkçe kurallarıyla büyük harfe çevirir."""
+    if deger is None:
+        return ""
+    s = " ".join(str(deger).split())
+    return s.translate(TR_UPPER).upper()
+
+
+def norm_tc(deger):
+    if deger is None:
+        return ""
+    s = re.sub(r"\D", "", str(deger).split(".")[0] if isinstance(deger, float) else str(deger))
+    return s.zfill(11) if s else ""
+
+
+def norm_tel(deger):
+    """Sadece rakam bırakır, başındaki 0'ı atar (örn. 530XXXXXX7)."""
+    if deger is None:
+        return None
+    s = re.sub(r"\D", "", str(deger).split(".")[0] if isinstance(deger, float) else str(deger))
+    if s.startswith("90") and len(s) == 12:
+        s = s[2:]
+    return s.lstrip("0") or None
+
+
+def baslik_bul(ws):
+    """Başlık satırını ve sütun numaralarını bulur (başlıklar uzun açıklamalı olduğundan öneke bakılır)."""
+    anahtarlar = {
+        "tc": "TCKN",
+        "ad": "ÇALIŞAN ADI",
+        "soyad": "ÇALIŞAN SOYADI",
+        "tel": "TELEFONU",
+        "eposta": "E-POSTA",
+    }
+    for satir in ws.iter_rows(min_row=1, max_row=15):
+        sutunlar = {}
+        for hucre in satir:
+            if isinstance(hucre.value, str):
+                metin = norm_ad(hucre.value)
+                for ad, onek in anahtarlar.items():
+                    if ad not in sutunlar and metin.startswith(onek):
+                        sutunlar[ad] = hucre.column
+        if "tc" in sutunlar and "ad" in sutunlar:
+            return satir[0].row, sutunlar
+    sys.exit(f"Başlık satırı bulunamadı: {ws.title}")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("kaynak", help="Telefon/e-posta dolu Excel")
+    p.add_argument("hedef", help="Ad, TC, doğum tarihi dolu Excel")
+    p.add_argument("-o", "--cikti", default="birlesik.xlsx", help="Çıktı dosyası (varsayılan: birlesik.xlsx)")
+    a = p.parse_args()
+
+    kws = load_workbook(a.kaynak, data_only=True).active
+    k_satir, k_sut = baslik_bul(kws)
+
+    # (tc, ad, soyad) -> (telefon, eposta)
+    kaynak = {}
+    for r in range(k_satir + 1, kws.max_row + 1):
+        tc = norm_tc(kws.cell(r, k_sut["tc"]).value)
+        if not tc:
+            continue
+        ad = norm_ad(kws.cell(r, k_sut["ad"]).value)
+        soyad = norm_ad(kws.cell(r, k_sut["soyad"]).value) if "soyad" in k_sut else ""
+        tel = norm_tel(kws.cell(r, k_sut["tel"]).value) if "tel" in k_sut else None
+        eposta = kws.cell(r, k_sut["eposta"]).value if "eposta" in k_sut else None
+        eposta = str(eposta).strip() if eposta not in (None, "") else None
+        kaynak[(tc, ad, soyad)] = (tel, eposta)
+
+    hwb = load_workbook(a.hedef)
+    hws = hwb.active
+    h_satir, h_sut = baslik_bul(hws)
+    for gerekli in ("tel", "eposta"):
+        if gerekli not in h_sut:
+            sys.exit(f"Hedef dosyada '{gerekli}' sütunu yok.")
+
+    eslesen = eslesmeyen = 0
+    eslesmeyenler = []
+    for r in range(h_satir + 1, hws.max_row + 1):
+        tc = norm_tc(hws.cell(r, h_sut["tc"]).value)
+        if not tc:
+            continue
+        ad = norm_ad(hws.cell(r, h_sut["ad"]).value)
+        soyad = norm_ad(hws.cell(r, h_sut["soyad"]).value) if "soyad" in h_sut else ""
+        bilgi = kaynak.get((tc, ad, soyad))
+        if bilgi is None:
+            eslesmeyen += 1
+            eslesmeyenler.append((r, tc, ad, soyad))
+            continue
+        tel, eposta = bilgi
+        if tel:
+            hws.cell(r, h_sut["tel"]).value = tel
+        if eposta:
+            hws.cell(r, h_sut["eposta"]).value = eposta
+        eslesen += 1
+
+    hwb.save(a.cikti)
+    print(f"Eşleşen: {eslesen} | Eşleşmeyen: {eslesmeyen} | Çıktı: {a.cikti}")
+    for r, tc, ad, soyad in eslesmeyenler:
+        print(f"  Satır {r}: {tc} {ad} {soyad} -> kaynakta bulunamadı")
+
+
+if __name__ == "__main__":
+    main()
