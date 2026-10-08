@@ -218,7 +218,15 @@ def main():
             hedef.yaz(r, h_sut["eposta"], eposta)
 
     cikti = a.cikti or re.sub(r"(\.xls[xm]?)$", r"_dolu\1", a.hedef, flags=re.I)
-    hedef.kaydet(cikti)
+    try:
+        hedef.kaydet(cikti)
+    except PermissionError:
+        # Dosya genelde Excel'de açıktır; kapatmadan devam edebilmek için yeni bir adla kaydet
+        import time
+        yeni = re.sub(r"(\.xls[xm]?)$", time.strftime("_%H%M%S") + r"\1", cikti, flags=re.I)
+        print(f"'{cikti}' yazılamadı (Excel'de açık olabilir). Şuraya kaydediyorum: {yeni}")
+        cikti = yeni
+        hedef.kaydet(cikti)
 
     satirlar_ = [f"Tam eşleşen: {tam_eslesen} | Sadece TC ile eşleşen: {len(tc_eslesen)} "
                  f"| Bulunamayan: {len(bulunamayan)} | Çıktı: {cikti}"]
